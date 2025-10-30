@@ -681,6 +681,32 @@ header p {
   padding: 0.5rem;
 }
 
+.image-placeholder.media-loading {
+  border-style: solid;
+  border-color: var(--accent-color);
+  box-shadow: 0 0 15px rgba(255, 193, 7, 0.4);
+  animation: pulse-border 1.5s infinite ease-in-out;
+}
+
+.image-placeholder.media-loading p {
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--accent-color);
+    font-weight: 500;
+}
+
+@keyframes pulse-border {
+  0% {
+    box-shadow: 0 0 10px rgba(255, 193, 7, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(255, 193, 7, 0.6);
+  }
+  100% {
+    box-shadow: 0 0 10px rgba(255, 193, 7, 0.3);
+  }
+}
+
 .image-gallery {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

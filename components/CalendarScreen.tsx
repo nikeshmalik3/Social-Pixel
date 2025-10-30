@@ -44,7 +44,10 @@ const CalendarScreen = ({ calendarData, activeTab, setActiveTab, handleContentUp
                   {item.format === 'Image' && (
                     <>
                       {item.isGeneratingImage ? (
-                        <div className="image-placeholder"><div className="inline-spinner"></div></div>
+                        <div className="image-placeholder media-loading">
+                            <div className="inline-spinner"></div>
+                            <p>Generating Images...</p>
+                        </div>
                       ) : (item.imageUrls && item.imageUrls.length > 0) ? (
                         <div>
                           <div className="image-gallery">
@@ -90,9 +93,9 @@ const CalendarScreen = ({ calendarData, activeTab, setActiveTab, handleContentUp
                   {(item.format === 'Reel' || item.format === 'Short Video' || item.format === 'GIF') && (
                     <>
                       {item.isGeneratingVideo ? (
-                        <div className="image-placeholder">
+                        <div className="image-placeholder media-loading">
                           <div className="inline-spinner"></div>
-                          <p style={{marginTop: '0.5rem', fontSize: '0.8rem'}}>{item.videoGenerationMessage}</p>
+                          <p>{item.videoGenerationMessage}</p>
                         </div>
                       ) : item.videoUrl ? (
                         <video src={item.videoUrl} controls style={{width: '100%', borderRadius: '8px'}} />
