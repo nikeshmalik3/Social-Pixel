@@ -1,4 +1,4 @@
-export type AppStep = 'profile' | 'analyzing' | 'review' | 'generatingCalendar' | 'calendar' | 'error';
+export type AppStep = 'profile' | 'analyzing' | 'review' | 'generatingCalendar' | 'calendar' | 'error' | 'apiKey';
 
 export interface CompanyProfile {
   name: string;

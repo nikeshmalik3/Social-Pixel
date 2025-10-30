@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom/client';
 import { GoogleGenAI, Modality } from "@google/genai";
 import * as pdfjsLib from 'pdfjs-dist';
@@ -14,11 +14,8 @@ import CalendarScreen from './components/CalendarScreen';
 import ErrorScreen from './components/ErrorScreen';
 import ApiKeyScreen from './components/ApiKeyScreen';
 
-// FIX: Configure the PDF.js worker to resolve loading issues and enable PDF parsing.
-// The URL is derived from the importmap in index.html to ensure consistency.
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://aistudiocdn.com/pdfjs-dist@4.4.168/build/pdf.worker.min.mjs`;
 
-// FIX: Moved the AIStudio interface definition inside the `declare global` block to resolve potential TypeScript scope conflicts with the `window` object augmentation.
 declare global {
   interface AIStudio {
     hasSelectedApiKey: () => Promise<boolean>;
@@ -26,7 +23,6 @@ declare global {
   }
   
   interface Window {
-    // FIX: Made `aistudio` optional to resolve the TypeScript error "All declarations of 'aistudio' must have identical modifiers." This aligns with its conditional usage in the code.
     aistudio?: AIStudio;
     process: {
       env: {
@@ -71,7 +67,6 @@ const App = () => {
     };
     if (savedProfile) {
       try {
-        // Spreading a default ensures all keys are present even if localStorage data is from an old version
         return { ...defaultProfile, ...JSON.parse(savedProfile) };
       } catch (e) {
         console.error('Failed to parse company profile from localStorage, using default.', e);
@@ -85,7 +80,6 @@ const App = () => {
     if (savedCalendar) {
       try {
         const parsed = JSON.parse(savedCalendar);
-        // Ensure the parsed data is a non-null object before returning
         if (typeof parsed === 'object' && parsed !== null) {
           return parsed;
         }
@@ -106,10 +100,8 @@ const App = () => {
   const [platformsToGenerate, setPlatformsToGenerate] = useState<string[]>([]);
   const [calendarGenerationProgress, setCalendarGenerationProgress] = useState<{ currentPlatform: string | null; completedPlatforms: string[] }>({ currentPlatform: null, completedPlatforms: [] });
   const [analysisInterval, setAnalysisInterval] = useState<number | null>(null);
-
   const [calendarDuration, setCalendarDuration] = useState(30);
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(ALL_PLATFORMS);
-
 
   useEffect(() => {
     const checkApiKey = async () => {
@@ -135,14 +127,37 @@ const App = () => {
   }, [profile]);
 
   useEffect(() => {
-    localStorage.setItem('calendarData', JSON.stringify(calendarData));
+    if (Object.keys(calendarData).length > 0) {
+        const storableCalendarData: CalendarData = {};
+        for (const platform in calendarData) {
+            storableCalendarData[platform] = calendarData[platform].map(entry => {
+                const { 
+                    imageUrls, 
+                    selectedImageUrl, 
+                    videoUrl, 
+                    isGeneratingImage, 
+                    isGeneratingVideo,
+                    videoGenerationMessage,
+                    ...rest 
+                } = entry;
+                return rest;
+            });
+        }
+        try {
+            localStorage.setItem('calendarData', JSON.stringify(storableCalendarData));
+        } catch (e) {
+            console.error("Failed to save calendar data to localStorage (quota may be exceeded):", e);
+        }
+    } else {
+        localStorage.removeItem('calendarData');
+    }
+
     if (Object.keys(calendarData).length > 0 && !activeTab) {
       setActiveTab(Object.keys(calendarData)[0]);
     }
   }, [calendarData, activeTab]);
 
   const handleSelectApiKey = async () => {
-    // FIX: Added a check for window.aistudio to prevent potential runtime errors now that its type is optional.
     if (window.aistudio) {
       await window.aistudio.openSelectKey();
     }
@@ -175,7 +190,6 @@ const App = () => {
         return new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = async (event) => {
-            // FIX: Add type guard to ensure result is an ArrayBuffer, resolving potential type inference issues.
             if (!event.target?.result || !(event.target.result instanceof ArrayBuffer)) {
               return reject(new Error('FileReader failed to read the file as an ArrayBuffer.'));
             }
@@ -191,7 +205,6 @@ const App = () => {
               }
               resolve(fileText.trim());
             } catch (error) {
-              // FIX: Ensure an Error object is always rejected for consistent error handling, resolving an error with accessing properties on an 'unknown' type.
               if (error instanceof Error) {
                 reject(error);
               } else {
@@ -199,7 +212,6 @@ const App = () => {
               }
             }
           };
-          // FIX: Ensure an Error object is rejected on reader error to prevent rejecting with a ProgressEvent.
           reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`));
           reader.readAsArrayBuffer(file);
         });
@@ -235,13 +247,15 @@ const App = () => {
             
             const colorCounts: { [key: string]: number } = {};
             const data = imageData.data;
-            for (let i = 0; i < data.length; i += 4 * 4) { // Sample pixels for performance
+            for (let i = 0; i < data.length; i += 4 * 4) { // Sample every 4th pixel
                 const r = data[i];
                 const g = data[i + 1];
                 const b = data[i + 2];
+                // Skip transparent, white, or black pixels
                 if (data[i+3] < 125 || (r > 250 && g > 250 && b > 250) || (r < 10 && g < 10 && b < 10)) {
                     continue;
                 }
+                // Group similar colors
                 const key = `${Math.round(r/20)*20},${Math.round(g/20)*20},${Math.round(b/20)*20}`;
                 colorCounts[key] = (colorCounts[key] || 0) + 1;
             }
@@ -272,7 +286,6 @@ const App = () => {
     if (analysisInterval) window.clearInterval(analysisInterval);
 
     let stepIndex = 0;
-    // FIX: Use `window.setInterval` to ensure the browser's implementation is used, which returns a `number` type, resolving the TypeScript error where it was inferred as Node.js's `Timeout` object.
     const interval = window.setInterval(() => {
         if (stepIndex < ANALYSIS_STEPS.length) {
             setAnalysisProgress(p => [...p, ANALYSIS_STEPS[stepIndex]]);
@@ -301,322 +314,294 @@ const App = () => {
 
           1. **Brand Profile**: Synthesize all info into a brand summary. Include a 'visualIdentity' section analyzing the logo colors and suggesting a vibe.
           2. **Market Trends**: Identify the top 3-5 current, relevant market trends for this industry.
-          3. **Competitor Analysis**: If no competitor URLs were provided, find the top 5 key competitors. For each, analyze their content strategy, voice, and key themes.
-              
-          **IMPORTANT**: Your entire response MUST be a single, raw JSON object. Do not include markdown.
-          The required JSON structure is:
+          3. **Competitor Analysis**: If no competitor URLs were provided, find the top 5 key competitors. For each, analyze their content strategy, voice, and key themes/pillars.
+          4. **Output Schema**: Structure your entire response as a single, valid JSON object matching this schema. Do not add markdown formatting like \`\`\`json.
           {
-            "brandProfile": {
-                "summary": "string",
-                "visualIdentity": {
-                    "logoColors": ["#hex1", "#hex2"],
-                    "suggestedPalette": ["#hex3", "#hex4"],
-                    "vibe": "string"
-                }
-            },
-            "trendAnalysis": { "summary": "string", "trends": [{ "trend": "string", "description": "string" }] },
-            "competitorAnalysis": { "summary": "string", "competitors": [{ "name": "string", "url": "string", "analysis": "string" }] }
+            "brandProfile": {"summary": "string", "visualIdentity": {"logoColors": ["string"], "suggestedPalette": ["string"], "vibe": "string"}},
+            "trendAnalysis": {"summary": "string", "trends": [{"trend": "string", "description": "string"}]},
+            "competitorAnalysis": {"summary": "string", "competitors": [{"name": "string", "url": "string", "analysis": "string"}]}
           }
         `;
 
         const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
+            model: 'gemini-2.5-flash',
             contents: prompt,
-            config: { tools: [{ googleSearch: {} }] },
+            config: {
+                tools: [{ googleSearch: {} }],
+            },
         });
-        
-        if (analysisInterval) window.clearInterval(analysisInterval);
 
-        let resultText = response.text.trim();
-        const jsonStartIndex = resultText.indexOf('{');
-        const jsonEndIndex = resultText.lastIndexOf('}');
-        if (jsonStartIndex === -1 || jsonEndIndex === -1) throw new Error("AI response did not contain a valid JSON object.");
+        window.clearInterval(interval);
+
+        const text = response.text;
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        const jsonString = jsonMatch ? jsonMatch[0] : text;
         
-        resultText = resultText.substring(jsonStartIndex, jsonEndIndex + 1);
+        const parsedResult = JSON.parse(jsonString) as Omit<AnalysisResult, 'sources'>;
+
+        const resultWithSources: AnalysisResult = {
+            ...parsedResult,
+            sources: response.candidates?.[0]?.groundingMetadata?.groundingChunks
+                ?.map(chunk => chunk.web)
+                .filter(Boolean) as Array<{ uri: string; title: string; }> || []
+        };
         
-        const parsedResult = JSON.parse(resultText);
-        const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-        const sources = groundingChunks.map(chunk => chunk.web || { uri: '#', title: 'Internal Knowledge' });
-        
-        setAnalysisResult({ ...parsedResult, sources });
+        setAnalysisResult(resultWithSources);
         setStep('review');
 
     } catch (e) {
-        if (analysisInterval) window.clearInterval(analysisInterval);
+        window.clearInterval(interval);
         console.error("Analysis failed:", e);
-        setError("The AI's response was not in the expected format. Please try again.");
+        if (e instanceof Error) {
+            setError(`Analysis failed: ${e.message}. Please check your API key and network connection.`);
+        } else {
+            setError("An unknown error occurred during analysis.");
+        }
         setStep('error');
     }
   };
 
   const handleGenerateCalendar = async () => {
-    if (!analysisResult) {
-      setError("Analysis data is missing.");
-      setStep('error');
-      return;
-    }
-
-    setPlatformsToGenerate(selectedPlatforms);
-    setCalendarGenerationProgress({ currentPlatform: null, completedPlatforms: [] });
+    if (!analysisResult) return;
     setStep('generatingCalendar');
-    setError(null);
-    setCalendarData({}); // Clear previous calendar
+    setCalendarGenerationProgress({ currentPlatform: null, completedPlatforms: [] });
+    setActiveTab(selectedPlatforms[0]);
+    
+    let newCalendarData: CalendarData = {};
 
     try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-        for (const platform of selectedPlatforms) {
-            setCalendarGenerationProgress(prev => ({ ...prev, currentPlatform: platform }));
+      for (const platform of selectedPlatforms) {
+        setCalendarGenerationProgress(prev => ({ ...prev, currentPlatform: platform }));
 
-            const prompt = `
-              **Primary Goal:** Create a detailed, actionable ${calendarDuration}-day social media content calendar for ${profile.name}.
-              **Target Platform:** Generate content specifically for ${platform}.
+        const prompt = `
+            Based on this strategic analysis, create a ${calendarDuration}-day social media content calendar for ${platform}.
+            Analysis: ${JSON.stringify(analysisResult)}
 
-              **Core Brand Identity & Guidelines (Strictly Adhere):**
-              - **Brand Summary:** ${analysisResult.brandProfile.summary}
-              - **Brand Voice & Vibe:** ${analysisResult.brandProfile.visualIdentity.vibe}. Maintain this tone consistently.
-              - **Brand Visual Palette:** ${analysisResult.brandProfile.visualIdentity.suggestedPalette.join(', ')}. Image and video prompts must reflect these colors and aesthetic.
-              - **Content Focus:** ${profile.contentFocus}
+            Generate an array of ${calendarDuration} JSON objects, one for each day.
+            The response MUST be a single valid JSON array. Do not add markdown formatting.
 
-              **Strategic Inputs (Base all content on this analysis):**
-              - **Key Market Trends:** ${analysisResult.trendAnalysis.trends.map(t => t.trend).join(', ')}. Weave these themes naturally into the content.
-              - **Competitor Intelligence:**
-                ${analysisResult.competitorAnalysis.competitors.map(c => `- ${c.name}: ${c.analysis}`).join('\n')}
-                Create content that is differentiated and superior to these competitor strategies.
+            For each day, provide:
+            - "day": (e.g., "Day 1")
+            - "format": Choose from 'Image', 'Reel', 'Short Video', 'GIF', or 'Text'.
+            - "postType": A category like 'Educational', 'Behind the Scenes', 'Product Spotlight', 'User-Generated Content', 'Question/Poll', 'Company News'.
+            - "contentIdea": A detailed caption for the post, written in a voice suitable for ${platform}.
+            - "hashtags": A string of relevant hashtags, starting with '#'.
+            - "imagePrompt": A detailed, descriptive prompt for an AI image generator to create a visual for the post. Describe the scene, style, colors, and composition.
+        `;
+        
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+        });
 
-              **Content Generation Instructions:**
-              1. **Platform-Specific Tailoring:**
-                  - For LinkedIn: Professional, insightful captions. Focus on industry leadership and value. Use 2-3 paragraphs.
-                  - For Instagram: Visually-driven captions. Use emojis, storytelling, and engaging questions. Keep paragraphs short (1-2 sentences).
-                  - For Facebook: Community-focused and conversational. A mix of professional and engaging tones. Use questions to prompt engagement.
-                  - For X: Concise, punchy, and timely. Maximum 280 characters. Use threads for longer ideas if necessary.
-              2. **Hashtag Strategy:** For each post, provide 5-7 highly relevant hashtags. Include a mix of broad industry hashtags, niche community hashtags, and unique branded hashtags. Base this on the provided trend and competitor analysis to maximize reach.
-              3. **Formatting (CRITICAL):**
-                  - All captions MUST be highly readable. Use short sentences and paragraphs. Break up text with double line breaks.
-                  - Incorporate bullet points (using '*') and numbered lists where appropriate.
-                  - Use relevant emojis to add personality and break up text, especially for Instagram and Facebook.
-              4. **Media Prompts:**
-                  - For all visual posts ('Image', 'Reel', etc.), provide a highly detailed, narrative "imagePrompt" for an AI image/video generator. The prompt must describe the scene, subjects, style, and mood, explicitly referencing the brand's visual palette and vibe.
-              
-              **Output Format (MANDATORY):**
-              Respond with a single, valid JSON object.
-              - The top-level key MUST be "${platform}".
-              - The value for this key MUST be an array of ${calendarDuration} post objects.
-              - Each post object must contain: "day", "format" ('Image', 'Reel', 'Short Video', 'GIF', 'Text'), "postType", "contentIdea" (the full, formatted caption), "hashtags", and "imagePrompt".
-            `;
+        const text = response.text;
+        const jsonMatch = text.match(/\[[\s\S]*\]/);
+        const jsonString = jsonMatch ? jsonMatch[0] : text;
+        newCalendarData[platform] = JSON.parse(jsonString);
 
-            const response = await ai.models.generateContent({
-                model: "gemini-2.5-flash",
-                contents: prompt,
-                config: { responseMimeType: "application/json" },
-            });
-            
-            const jsonResponse = JSON.parse(response.text);
-            setCalendarData(prev => ({ ...prev, ...jsonResponse }));
-            setCalendarGenerationProgress(prev => ({ ...prev, currentPlatform: null, completedPlatforms: [...prev.completedPlatforms, platform] }));
-        }
-
-        setActiveTab(selectedPlatforms[0] || 'LinkedIn');
-        setStep('calendar');
-
+        setCalendarGenerationProgress(prev => ({
+            ...prev,
+            completedPlatforms: [...prev.completedPlatforms, platform]
+        }));
+      }
+      setCalendarData(newCalendarData);
+      setStep('calendar');
     } catch (e) {
-        console.error(e);
-        setError("An error occurred generating the calendar. Please try again.");
-        setStep('error');
+      console.error('Calendar generation failed:', e);
+      if (e instanceof Error) {
+        setError(`Failed to generate calendar for ${calendarGenerationProgress.currentPlatform}: ${e.message}`);
+      } else {
+        setError('An unknown error occurred during calendar generation.');
+      }
+      setStep('error');
     }
   };
-  
+
+  const handleContentUpdate = (platform: string, index: number, field: keyof CalendarEntry, value: any) => {
+    setCalendarData(prev => {
+      const newPlatformData = [...(prev[platform] || [])];
+      if (newPlatformData[index]) {
+        newPlatformData[index] = { ...newPlatformData[index], [field]: value };
+      }
+      return { ...prev, [platform]: newPlatformData };
+    });
+  };
+
   const triggerImageGeneration = async (platform: string, index: number) => {
     const entry = calendarData[platform]?.[index];
     if (!entry) return;
 
-    setCalendarData(prev => ({ ...prev, [platform]: prev[platform].map((item, i) => i === index ? { ...item, isGeneratingImage: true } : item) }));
-
+    handleContentUpdate(platform, index, 'isGeneratingImage', true);
+    
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const response = await ai.models.generateImages({
             model: 'imagen-4.0-generate-001',
             prompt: entry.imagePrompt,
-            config: {
-                numberOfImages: 3,
-                outputMimeType: 'image/jpeg',
-                aspectRatio: '1:1',
-            },
+            config: { numberOfImages: 3 }
         });
-
-        const imageUrls = response.generatedImages.map(img => `data:image/jpeg;base64,${img.image.imageBytes}`);
         
-        setCalendarData(prev => ({
-            ...prev,
-            [platform]: prev[platform].map((item, i) => i === index ? {
-                ...item,
-                imageUrls,
-                selectedImageUrl: imageUrls[0],
-                isGeneratingImage: false
-            } : item)
-        }));
+        const imageUrls = response.generatedImages.map(img => `data:image/png;base64,${img.image.imageBytes}`);
+        handleContentUpdate(platform, index, 'imageUrls', imageUrls);
+        handleContentUpdate(platform, index, 'selectedImageUrl', imageUrls[0]);
+
     } catch (e) {
-        console.error("Image generation failed:", e);
-        setCalendarData(prev => ({ ...prev, [platform]: prev[platform].map((item, i) => i === index ? { ...item, isGeneratingImage: false } : item) }));
-        // Optionally show an error in the UI
+        console.error('Image generation failed:', e);
+        setError('Failed to generate images. Please try again.');
+    } finally {
+        handleContentUpdate(platform, index, 'isGeneratingImage', false);
     }
   };
-
-  const triggerVideoGeneration = async (platform: string, index: number) => {
-    const entry = calendarData[platform]?.[index];
-    if (!entry) return;
-
-    const updateMessage = (message: string) => {
-        setCalendarData(prev => ({
-            ...prev,
-            [platform]: prev[platform].map((item, i) => i === index ? { ...item, videoGenerationMessage: message } : item)
-        }));
-    };
-
-    setCalendarData(prev => ({ ...prev, [platform]: prev[platform].map((item, i) => i === index ? { ...item, isGeneratingVideo: true, videoGenerationMessage: VEO_MESSAGES[0] } : item) }));
-
-    try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        let operation = await ai.models.generateVideos({
-            model: 'veo-3.1-fast-generate-preview',
-            prompt: entry.imagePrompt,
-            config: { numberOfVideos: 1, resolution: '720p', aspectRatio: '9:16' }
-        });
-
-        let messageIndex = 1;
-        while (!operation.done) {
-            await new Promise(resolve => setTimeout(resolve, 10000)); // Poll every 10 seconds
-            updateMessage(VEO_MESSAGES[messageIndex % VEO_MESSAGES.length]);
-            messageIndex++;
-            operation = await ai.operations.getVideosOperation({ operation: operation });
-        }
-
-        const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-        if (!downloadLink) throw new Error("Video generation succeeded but no download link was found.");
-        
-        updateMessage('Downloading video...');
-        const videoResponse = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
-        const videoBlob = await videoResponse.blob();
-        const videoUrl = URL.createObjectURL(videoBlob);
-        
-        setCalendarData(prev => ({
-            ...prev,
-            [platform]: prev[platform].map((item, i) => i === index ? {
-                ...item,
-                videoUrl,
-                isGeneratingVideo: false
-            } : item)
-        }));
-    } catch (e) {
-        console.error("Video generation failed:", e);
-        updateMessage(`Error: ${e instanceof Error ? e.message : 'Unknown error'}`);
-        // Keep isGeneratingVideo as true to show the error, but add a button to retry or clear
-        setCalendarData(prev => ({ ...prev, [platform]: prev[platform].map((item, i) => i === index ? { ...item, isGeneratingVideo: false } : item) }));
-    }
-  };
-
+  
   const handleImageEdit = async (platform: string, index: number) => {
     const entry = calendarData[platform]?.[index];
     if (!entry || !entry.selectedImageUrl || !entry.imageEditPrompt) return;
 
-    setCalendarData(prev => ({ ...prev, [platform]: prev[platform].map((item, i) => i === index ? { ...item, isGeneratingImage: true } : item) }));
+    handleContentUpdate(platform, index, 'isGeneratingImage', true);
     
     try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const base64Data = entry.selectedImageUrl.split(',')[1];
-        const mimeType = entry.selectedImageUrl.split(';')[0].split(':')[1];
-
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
             contents: {
                 parts: [
-                    { inlineData: { data: base64Data, mimeType } },
+                    { inlineData: { data: base64Data, mimeType: 'image/png' } },
                     { text: entry.imageEditPrompt }
                 ]
             },
             config: { responseModalities: [Modality.IMAGE] }
         });
-
-        const part = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-        if (part?.inlineData) {
-            const newBase64 = part.inlineData.data;
-            const newMime = part.inlineData.mimeType;
-            const newImageUrl = `data:${newMime};base64,${newBase64}`;
-            
-            setCalendarData(prev => {
-                const newPlatformData = [...prev[platform]];
-                const currentItem = newPlatformData[index];
-                const newImageUrls = [...(currentItem.imageUrls || [])];
-                const editIndex = newImageUrls.indexOf(currentItem.selectedImageUrl || '');
-                if (editIndex !== -1) {
-                    newImageUrls[editIndex] = newImageUrl;
-                } else {
-                    newImageUrls.push(newImageUrl);
-                }
-                newPlatformData[index] = {
-                    ...currentItem,
-                    imageUrls: newImageUrls,
-                    selectedImageUrl: newImageUrl,
-                    isGeneratingImage: false,
-                    imageEditPrompt: ''
-                };
-                return { ...prev, [platform]: newPlatformData };
-            });
-        } else {
-             throw new Error("No image data returned from edit.");
+        
+        const newImageUrls: string[] = [];
+        for (const part of response.candidates[0].content.parts) {
+            if (part.inlineData) {
+                newImageUrls.push(`data:image/png;base64,${part.inlineData.data}`);
+            }
         }
+        
+        if (newImageUrls.length > 0) {
+            handleContentUpdate(platform, index, 'imageUrls', newImageUrls);
+            handleContentUpdate(platform, index, 'selectedImageUrl', newImageUrls[0]);
+            handleContentUpdate(platform, index, 'imageEditPrompt', '');
+        }
+
     } catch (e) {
-        console.error("Image edit failed:", e);
-        setCalendarData(prev => ({ ...prev, [platform]: prev[platform].map((item, i) => i === index ? { ...item, isGeneratingImage: false } : item) }));
+        console.error('Image edit failed:', e);
+        setError('Failed to edit image. Please try again.');
+    } finally {
+        handleContentUpdate(platform, index, 'isGeneratingImage', false);
+    }
+  };
+  
+  const triggerVideoGeneration = async (platform: string, index: number) => {
+    const entry = calendarData[platform]?.[index];
+    if (!entry) return;
+
+    if (window.aistudio && !(await window.aistudio.hasSelectedApiKey())) {
+      setIsApiKeySelected(false);
+      setStep('apiKey');
+      return;
+    }
+    
+    handleContentUpdate(platform, index, 'isGeneratingVideo', true);
+    handleContentUpdate(platform, index, 'videoGenerationMessage', VEO_MESSAGES[0]);
+
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      let operation = await ai.models.generateVideos({
+        model: 'veo-3.1-fast-generate-preview',
+        prompt: entry.imagePrompt,
+        config: { numberOfVideos: 1, resolution: '720p', aspectRatio: '9:16' }
+      });
+      
+      let messageIndex = 1;
+      const intervalId = setInterval(() => {
+          handleContentUpdate(platform, index, 'videoGenerationMessage', VEO_MESSAGES[messageIndex % VEO_MESSAGES.length]);
+          messageIndex++;
+      }, 5000);
+
+      while (!operation.done) {
+        await new Promise(resolve => setTimeout(resolve, 10000));
+        operation = await ai.operations.getVideosOperation({ operation: operation });
+      }
+      
+      clearInterval(intervalId);
+
+      const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
+      if (downloadLink) {
+        const videoResponse = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
+        const blob = await videoResponse.blob();
+        const videoUrl = URL.createObjectURL(blob);
+        handleContentUpdate(platform, index, 'videoUrl', videoUrl);
+      } else {
+        throw new Error('Video generation completed but no download link was found.');
+      }
+
+    } catch (e) {
+        console.error('Video generation failed:', e);
+        if (e instanceof Error && e.message.includes('Requested entity was not found')) {
+            setError('Video generation failed. Your API key may be invalid. Please select a valid key.');
+            setIsApiKeySelected(false);
+            setStep('apiKey');
+        } else {
+            setError('Failed to generate video. Please try again.');
+        }
+    } finally {
+        handleContentUpdate(platform, index, 'isGeneratingVideo', false);
     }
   };
 
-  const handleContentUpdate = (platform: string, index: number, field: keyof CalendarEntry, value: string) => {
-    setCalendarData(prev => ({
-        ...prev,
-        [platform]: prev[platform].map((item, i) => i === index ? { ...item, [field]: value } : item)
-    }));
-  };
-  
-  const startOver = () => {
-    localStorage.removeItem('calendarData');
-    if (analysisInterval) window.clearInterval(analysisInterval);
-    setCalendarData({});
-    setStep('profile');
-    setError(null);
-    setAnalysisResult(null);
-    setAnalysisProgress([]);
-  };
-
   const handleExport = () => {
-    if (!calendarData[activeTab]) return;
-    const headers = ['Day', 'Format', 'Post Type', 'Content', 'Hashtags', 'Media URL/Prompt'];
-    const rows = calendarData[activeTab].map(item => [
-      item.day,
-      item.format,
-      item.postType,
-      `"${item.contentIdea.replace(/"/g, '""')}"`, // Escape quotes
-      `"${item.hashtags.replace(/"/g, '""')}"`,
-      `"${(item.selectedImageUrl || item.videoUrl || item.imagePrompt).replace(/"/g, '""')}"`
-    ]);
-    const csvContent = "data:text/csv;charset=utf-8," 
-      + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-    
+    let csvContent = "data:text/csv;charset=utf-8,";
+    csvContent += "Platform,Day,Format,Post Type,Content Idea,Hashtags,Media URL\n";
+
+    Object.entries(calendarData).forEach(([platform, entries]) => {
+      entries.forEach(entry => {
+        const row = [
+          platform,
+          entry.day,
+          entry.format,
+          entry.postType,
+          `"${entry.contentIdea.replace(/"/g, '""')}"`,
+          `"${entry.hashtags.replace(/"/g, '""')}"`,
+          entry.selectedImageUrl || entry.videoUrl || ''
+        ].join(',');
+        csvContent += row + "\r\n";
+      });
+    });
+
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `${profile.name}_${activeTab}_calendar.csv`);
+    link.setAttribute("download", "social_media_calendar.csv");
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
   
+  const startOver = () => {
+    localStorage.removeItem('companyProfile');
+    localStorage.removeItem('calendarData');
+    setProfile({ name: '', website: '', socials: '', competitors: '', knowledgeBase: '', logo: null, contentFocus: '', logoColors: [] });
+    setCalendarData({});
+    setAnalysisResult(null);
+    setLogoFileName(null);
+    setKnowledgeBaseFileNames(null);
+    setSelectedPlatforms(ALL_PLATFORMS);
+    setStep('profile');
+    setError(null);
+  };
+
   const renderStep = () => {
     switch(step) {
       case 'profile':
         return <ProfileScreen 
-          profile={profile}
-          handleProfileChange={handleProfileChange}
+          profile={profile} 
+          handleProfileChange={handleProfileChange} 
           handleFileChange={handleFileChange}
           logoFileName={logoFileName}
           knowledgeBaseFileNames={knowledgeBaseFileNames}
@@ -632,21 +617,11 @@ const App = () => {
       case 'analyzing':
         return <AnalysisScreen allSteps={ANALYSIS_STEPS} progress={analysisProgress} />;
       case 'review':
-        return <ReviewScreen
-          analysisResult={analysisResult}
-          setStep={setStep}
-          handleGenerateCalendar={handleGenerateCalendar}
-        />;
+        return <ReviewScreen analysisResult={analysisResult} setStep={setStep} handleGenerateCalendar={handleGenerateCalendar} />;
       case 'generatingCalendar':
-        return <LoadingScreen
-          message="Crafting your multi-platform calendar..."
-          platforms={platformsToGenerate}
-          currentPlatform={calendarGenerationProgress.currentPlatform}
-          completedPlatforms={calendarGenerationProgress.completedPlatforms}
-        />;
+        return <LoadingScreen message="Generating content calendar..." {...calendarGenerationProgress} platforms={selectedPlatforms} />;
       case 'calendar':
-        if (Object.keys(calendarData).length > 0) {
-          return <CalendarScreen
+        return <CalendarScreen
             calendarData={calendarData}
             activeTab={activeTab}
             setActiveTab={setActiveTab}
@@ -656,19 +631,15 @@ const App = () => {
             handleImageEdit={handleImageEdit}
             handleExport={handleExport}
             startOver={startOver}
-          />;
-        }
-        return <LoadingScreen message="Loading..." />;
+        />;
+      case 'apiKey':
+        return <ApiKeyScreen onSelectKey={handleSelectApiKey} />;
       case 'error':
         return <ErrorScreen error={error} startOver={startOver} />;
       default:
-        return null;
+        return <ErrorScreen error="Invalid application state." startOver={startOver} />;
     }
   };
-
-  if (!isApiKeySelected) {
-    return <ApiKeyScreen onSelectKey={handleSelectApiKey} />;
-  }
 
   return (
     <div className="container">
@@ -677,5 +648,5 @@ const App = () => {
   );
 };
 
-const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
+const root = ReactDOM.createRoot(document.getElementById('root')!);
 root.render(<App />);

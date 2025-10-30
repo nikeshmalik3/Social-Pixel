@@ -13,10 +13,12 @@ interface CalendarScreenProps {
   startOver: () => void;
 }
 
-const CalendarScreen = ({ calendarData, activeTab, setActiveTab, handleContentUpdate, triggerImageGeneration, triggerVideoGeneration, handleImageEdit, handleExport, startOver }: CalendarScreenProps) => (
+const CalendarScreen = ({ calendarData, activeTab, setActiveTab, handleContentUpdate, triggerImageGeneration, triggerVideoGeneration, handleImageEdit, handleExport, startOver }: CalendarScreenProps) => {
+    
+    return (
     <>
       <div className="calendar-header">
-        <h2>Your 30-Day Content Plan</h2>
+        <h2>Your {Object.values(calendarData)[0]?.length || ''}-Day Content Plan</h2>
         <div className="calendar-controls">
             <button className="secondary-button" onClick={handleExport}>Export to CSV</button>
             <button className="secondary-button" onClick={startOver}>← Start Over</button>
@@ -38,8 +40,21 @@ const CalendarScreen = ({ calendarData, activeTab, setActiveTab, handleContentUp
                 <td style={{width: '5%'}}>{item.day}</td>
                 <td style={{width: '10%'}}><span className="tag format">{item.format}</span></td>
                 <td style={{width: '12%'}}><span className="tag type">{item.postType}</span></td>
-                <td contentEditable suppressContentEditableWarning onBlur={(e) => handleContentUpdate(activeTab, index, 'contentIdea', e.currentTarget.innerText)}>{item.contentIdea}</td>
-                <td style={{width: '18%'}} contentEditable suppressContentEditableWarning onBlur={(e) => handleContentUpdate(activeTab, index, 'hashtags', e.currentTarget.innerText)}>{item.hashtags}</td>
+                <td 
+                    contentEditable 
+                    suppressContentEditableWarning 
+                    onBlur={(e) => handleContentUpdate(activeTab, index, 'contentIdea', e.currentTarget.innerText)}
+                >
+                    {item.contentIdea}
+                </td>
+                <td 
+                    style={{width: '18%'}} 
+                    contentEditable 
+                    suppressContentEditableWarning 
+                    onBlur={(e) => handleContentUpdate(activeTab, index, 'hashtags', e.currentTarget.innerText)}
+                >
+                    {item.hashtags}
+                </td>
                 <td className="image-cell">
                   {item.format === 'Image' && (
                     <>
@@ -116,6 +131,7 @@ const CalendarScreen = ({ calendarData, activeTab, setActiveTab, handleContentUp
         </table>
       </div>
     </>
-);
+    );
+}
 
 export default CalendarScreen;
